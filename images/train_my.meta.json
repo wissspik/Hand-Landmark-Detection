@@ -1,0 +1,11 @@
+{
+  "created_utc": "2026-04-04T12:59:36.559890+00:00",
+  "backend": "tasks",
+  "camera_id": 0,
+  "interval_sec": 0.2,
+  "max_num_hands": 2,
+  "min_detection_confidence": 0.5,
+  "min_tracking_confidence": 0.5,
+  "flip": true,
+  "save_empty": false
+}
