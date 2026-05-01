@@ -14,16 +14,12 @@
 
 ## Установка
 
-Рекомендуется использовать отдельное виртуальное окружение:
-
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\activate
 python -m pip install --upgrade pip
 python -m pip install numpy opencv-python mediapipe pillow torch matplotlib
 ```
-
-Для GPU-версии PyTorch установи сборку под свою CUDA-версию.
 
 ## Быстрый старт
 
@@ -51,12 +47,6 @@ python train_keypoints_one_file.py --dataset-root . --epochs 20 --batch-size 64 
 python run_webcam_keypoints.py --checkpoint best_keypoint_model.pt --hand-landmarker-model hand_landmarker.task
 ```
 
-Запуск на отдельных изображениях:
-
-```powershell
-python run_webcam_keypoints.py --checkpoint best_keypoint_model.pt --hand-landmarker-model hand_landmarker.task --image-paths images/val_my/frame_000000.jpg --output-dir inference_outputs
-```
-
 ## Структура данных
 
 Для обучения скрипт ожидает:
@@ -65,7 +55,3 @@ python run_webcam_keypoints.py --checkpoint best_keypoint_model.pt --hand-landma
 - `images/val_my/` и `images/val_my.annotations.jsonl`
 
 Каждая запись JSONL должна ссылаться на изображение и содержать координаты ключевых точек руки. COCO-часть проекта использует файлы `_annotations.coco.json` внутри `coco_annotation/<split>/`.
-
-## Локальные артефакты
-
-В `.gitignore` добавлены Python-кэши, виртуальные окружения, временные файлы, debug/inference-выводы, сгенерированные аугментации и бинарные модели (`*.pt`, `*.task`, `*.onnx` и похожие). Если нужно хранить веса или сгенерированный датасет в git, убери соответствующие правила из `.gitignore`.
