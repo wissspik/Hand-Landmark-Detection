@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 import argparse
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
+
+try:
+    _MPLCONFIGDIR = Path(__file__).resolve().parent / ".tmp" / "matplotlib"
+    _MPLCONFIGDIR.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("MPLCONFIGDIR", str(_MPLCONFIGDIR))
+except OSError:
+    pass
 
 import cv2
 import mediapipe as mp
 import numpy as np
 import torch
 
-from train_keypoints_one_file import SimpleHandKeypointCNN
+from train_keypoints import SimpleHandKeypointCNN
 
 
 DEFAULT_HAND_LANDMARKER_URL = (
@@ -41,6 +49,40 @@ HAND_CONNECTIONS: list[tuple[int, int]] = [
     (18, 19),
     (19, 20),
 ]
+
+
+class LegacyHandKeypointCNN(torch.nn.Module):
+    """Architecture used by older best_keypoint_model.pt checkpoints."""
+
+    def __init__(self, num_keypoints: int = 21) -> None:
+        super().__init__()
+        self.num_keypoints = num_keypoints
+
+        self.features = torch.nn.Sequential(
+            torch.nn.Conv2d(3, 16, kernel_size=3, padding=1),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.AdaptiveAvgPool2d((1, 1)),
+        )
+
+        self.head = torch.nn.Sequential(
+            torch.nn.Flatten(),
+            torch.nn.Linear(256, 128),
+            torch.nn.ReLU(inplace=True),
+            torch.nn.Linear(128, num_keypoints * 2),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.features(x)
+        x = self.head(x)
+        return x.view(-1, self.num_keypoints, 2)
 
 
 @dataclass
@@ -114,6 +156,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--camera-id", type=int, default=0)
+    parser.add_argument(
+        "--camera-search-limit",
+        type=int,
+        default=6,
+        help="How many camera indexes to try if --camera-id is not available.",
+    )
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--num-keypoints", type=int, default=21)
     parser.add_argument("--max-num-hands", type=int, default=2)
@@ -211,9 +259,7 @@ def load_model(
     image_size: int,
     num_keypoints: int,
     device: torch.device,
-) -> tuple[SimpleHandKeypointCNN, int | None, float | None]:
-    model = SimpleHandKeypointCNN(num_keypoints=num_keypoints).to(device)
-
+) -> tuple[torch.nn.Module, int | None, float | None]:
     checkpoint = torch.load(checkpoint_path, map_location=device)
     checkpoint_epoch: int | None = None
     checkpoint_val_loss: float | None = None
@@ -229,6 +275,11 @@ def load_model(
         state_dict = checkpoint
     else:
         raise ValueError("Unsupported checkpoint format.")
+
+    if "head.3.weight" in state_dict and "features.0.bias" in state_dict:
+        model: torch.nn.Module = LegacyHandKeypointCNN(num_keypoints=num_keypoints).to(device)
+    else:
+        model = SimpleHandKeypointCNN(num_keypoints=num_keypoints).to(device)
 
     with torch.no_grad():
         _ = model(torch.zeros(1, 3, image_size, image_size, device=device))
@@ -669,18 +720,51 @@ def run_image_mode(
             print(f"saved: {out_main.name} | hands={num_hands}")
 
 
+def open_camera(camera_id: int, search_limit: int) -> tuple[cv2.VideoCapture, int]:
+    search_limit = max(1, int(search_limit))
+    candidates = [camera_id]
+    candidates.extend(i for i in range(search_limit) if i != camera_id)
+
+    backends: list[int] = []
+    if hasattr(cv2, "CAP_DSHOW"):
+        backends.append(cv2.CAP_DSHOW)
+    backends.append(cv2.CAP_ANY)
+
+    tried: list[str] = []
+    for idx in candidates:
+        for backend in backends:
+            cap = cv2.VideoCapture(idx, backend)
+            tried.append(str(idx))
+            if not cap.isOpened():
+                cap.release()
+                continue
+
+            ok, frame = cap.read()
+            if ok and frame is not None:
+                return cap, idx
+
+            cap.release()
+
+    raise RuntimeError(
+        "Could not open webcam. "
+        f"Tried camera indexes: {', '.join(dict.fromkeys(tried))}. "
+        "Pass a working index with --camera-id."
+    )
+
+
 def run_webcam_mode(
     model: SimpleHandKeypointCNN,
     detector: HandDetector,
     args: argparse.Namespace,
     device: torch.device,
 ) -> None:
-    cap = cv2.VideoCapture(args.camera_id)
-    if not cap.isOpened():
-        raise RuntimeError(f"Could not open webcam with camera id {args.camera_id}")
+    cap, active_camera_id = open_camera(
+        camera_id=args.camera_id,
+        search_limit=args.camera_search_limit,
+    )
 
     win_name = "Hand Keypoints Pipeline (q/Esc to quit)"
-    print("running webcam inference...")
+    print(f"running webcam inference... camera_id={active_camera_id}")
 
     try:
         while True:
