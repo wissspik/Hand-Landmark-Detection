@@ -36,77 +36,22 @@ python -m pip install --upgrade pip
 ```powershell
 python -m pip install numpy opencv-python mediapipe pillow matplotlib
 ```
-
-Для обучения на видеокарте нужна CUDA-сборка PyTorch:
-
-```powershell
-python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128 --timeout 120 --retries 10
-```
-
-Проверка CUDA:
-
-```powershell
-python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
-```
-
-Если `torch.cuda.is_available()` выводит `False`, обучение на GPU не запустится.
-
 ## Обучение
 
-Основной запуск:
-
-```powershell
-python .\train_keypoints.py --pretrain-epochs 7 --finetune-epochs 30 --batch-size 16 --save-path .\best_keypoint_model_new.pt
-```
-
-Что происходит:
+Как происходит:
 
 1. `pretrain`: обучение на `images/train`, проверка на `images/val`.
 2. Загружается лучший state после pretrain.
 3. `finetune`: дообучение на `images/train_my`, проверка на `images/val_my`.
-4. В `best_keypoint_model_new.pt` сохраняется лучший чекпоинт по `val_my`, а не последняя эпоха.
+4. В `best_keypoint_model_new.pt` сохраняется лучший чекпоинт по `val_my`.
 5. Рядом сохраняются метрики и график:
    - `best_keypoint_model_new.metrics.json`
    - `best_keypoint_model_new.metrics.png`
 
-Быстрая проверка механики:
-
-```powershell
-python .\train_keypoints.py --pretrain-epochs 1 --finetune-epochs 1 --batch-size 16 --save-path .\best_keypoint_model_new.pt
-```
-
-Полезные параметры:
-
-- `--pretrain-epochs` - количество эпох на внешнем датасете `images/train`.
-- `--finetune-epochs` - количество эпох дообучения на твоих webcam-данных.
-- `--batch-size` - размер батча. Если видеокарта нестабильна или не хватает VRAM, уменьшить до `16` или `8`.
-- `--save-path` - куда сохранить лучший `.pt`.
-- `--crop-margin` - запас вокруг руки при crop. По умолчанию `0.25`.
-
 ## Запуск на веб-камере
 
 ```powershell
-python .\run_webcam_keypoints.py --checkpoint .\best_keypoint_model_new.pt --camera-id 2
-```
-
-Если не знаешь индекс камеры, можно не указывать `--camera-id`: скрипт попробует найти рабочую камеру сам.
-
-```powershell
-python .\run_webcam_keypoints.py --checkpoint .\best_keypoint_model_new.pt
-```
-
-Закрыть окно: `q` или `Esc`.
-
-Запуск на CPU:
-
-```powershell
-python .\run_webcam_keypoints.py --checkpoint .\best_keypoint_model_new.pt --use-cpu
-```
-
-Проверка на отдельных изображениях:
-
-```powershell
-python .\run_webcam_keypoints.py --checkpoint .\best_keypoint_model_new.pt --image-paths images\val_my\frame_000000.jpg --output-dir inference_outputs
+python run_webcam_keypoints.py --checkpoint best_keypoint_model_new.pt --camera-id 2
 ```
 
 ## Pipeline работы модели
@@ -145,52 +90,3 @@ python .\run_webcam_keypoints.py --checkpoint .\best_keypoint_model_new.pt --ima
 9. Получаются координаты keypoints уже в системе исходного кадра веб-камеры.
 10. На экран рисуются bbox и скелет руки.
 
-Схема:
-
-```text
-webcam frame
-  -> MediaPipe hand detection
-  -> bbox
-  -> crop hand
-  -> letterbox 224x224
-  -> CNN
-  -> predicted 21 keypoints
-  -> unletterbox
-  -> uncrop
-  -> draw on original frame
-```
-
-## Train / Val / Test
-
-В этом проекте используются `train` и `val`.
-
-- `train` - данные, на которых модель реально учится.
-- `val` - данные, на которых модель проверяется после эпохи. На них веса не обновляются.
-
-Внешний датасет:
-
-- `images/train` - обучение на общем датасете рук;
-- `images/val` - проверка качества на общем датасете рук.
-
-Твой webcam-датасет:
-
-- `images/train_my` - дообучение под твою вебку;
-- `images/val_my` - проверка под реальный сценарий.
-
-Финальный `.pt` выбирается по `val_my`, потому что задача проекта - хорошо работать на веб-камере.
-
-## Рекомендованные настройки
-
-Для локального обучения на нестабильной Windows/GPU:
-
-```powershell
-python .\train_keypoints.py --pretrain-epochs 7 --finetune-epochs 30 --batch-size 16 --save-path .\best_keypoint_model_new.pt
-```
-
-Для Colab или более стабильной GPU:
-
-```powershell
-python .\train_keypoints.py --pretrain-epochs 7 --finetune-epochs 30 --batch-size 64 --save-path .\best_keypoint_model_new.pt
-```
-
-Если качество на вебке плохое, чаще всего надо не просто увеличивать эпохи, а добавлять больше своих webcam-кадров: разные расстояния до камеры, освещение, повороты ладони, жесты и фон.
